@@ -178,6 +178,7 @@ export default function FocusApp() {
   const [backlogFilter, setBacklogFilter] = useState("all"); // all | critical | deadline | quick
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editingTitle, setEditingTitle] = useState("");
+  const [keyboardOffset, setKeyboardOffset] = useState(0);
   const [toast, setToast] = useState(null);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
@@ -205,6 +206,24 @@ export default function FocusApp() {
     window.addEventListener("beforeinstallprompt", handleBeforeInstall);
     return () => window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
   }, []);
+
+  // Lift capture sheet above soft keyboard using visualViewport
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv || !captureOpen) {
+      setKeyboardOffset(0);
+      return;
+    }
+    const handleResize = () => {
+      setKeyboardOffset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop));
+    };
+    vv.addEventListener("resize", handleResize);
+    handleResize(); // apply immediately if keyboard already open
+    return () => {
+      vv.removeEventListener("resize", handleResize);
+      setKeyboardOffset(0);
+    };
+  }, [captureOpen]);
 
   // Auto-fill top 3 from backlog by priority score (once per context per day)
   useEffect(() => {
@@ -1473,7 +1492,11 @@ export default function FocusApp() {
 
       {/* ==================== CAPTURE SHEET ==================== */}
       {captureOpen && (
-        <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) setCaptureOpen(false); }}>
+        <div
+          className="overlay"
+          onClick={(e) => { if (e.target === e.currentTarget) setCaptureOpen(false); }}
+          style={{ paddingBottom: keyboardOffset, transition: "padding-bottom 0.15s ease" }}
+        >
           <div className="sheet">
             <div style={{
               display: "flex", alignItems: "center", justifyContent: "space-between",
