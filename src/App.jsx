@@ -10,7 +10,14 @@ const EFFORT_SCORES = { small: 3, medium: 2, large: 1 };
 function calcPriority(task) {
   const imp = IMPORTANCE_SCORES[task.importance] || 2;
   const eff = EFFORT_SCORES[task.effort] || 2;
-  return imp * 10 + eff;
+  let score = imp * 10 + eff;
+  if (task.deadline) {
+    const days = daysUntil(task.deadline);
+    if (days <= 1) score += 8;
+    else if (days <= 3) score += 5;
+    else if (days <= 7) score += 2;
+  }
+  return score;
 }
 
 // ============================================================
@@ -122,28 +129,32 @@ const Icons = {
 // STYLES
 // ============================================================
 const COLORS = {
-  bg: "#0d0f11",
-  surface: "#161a1f",
-  surfaceHover: "#1c2127",
-  surfaceActive: "#222830",
-  border: "#2a3038",
-  borderLight: "#353d47",
-  text: "#e8eaed",
-  textMuted: "#8b929a",
-  textDim: "#5c636c",
-  accent: "#58a6ff",
-  accentDim: "#1a3a5c",
-  accentGlow: "rgba(88, 166, 255, 0.12)",
-  success: "#3fb950",
-  successDim: "#1a3524",
-  warning: "#d29922",
-  warningDim: "#3d2e0a",
-  danger: "#f85149",
-  dangerDim: "#3d1518",
-  work: "#bc8cff",
-  workDim: "#2d1f4e",
-  personal: "#39d353",
-  personalDim: "#1a3524",
+  bg: "#0a0c0f",
+  surface: "#13171c",
+  surfaceHover: "#191e25",
+  surfaceActive: "#1f252e",
+  border: "#242b34",
+  borderLight: "#2f3844",
+  text: "#eaecef",
+  textMuted: "#8d95a0",
+  textDim: "#545e6b",
+  accent: "#4f9eff",
+  accentBright: "#6eb3ff",
+  accentDim: "#152d50",
+  accentGlow: "rgba(79, 158, 255, 0.15)",
+  success: "#34c759",
+  successDim: "#0f2d1a",
+  warning: "#f59e0b",
+  warningDim: "#3a2500",
+  danger: "#ff453a",
+  dangerDim: "#3a0f0d",
+  work: "#bf5af2",
+  workDim: "#2a1245",
+  personal: "#30d158",
+  personalDim: "#0d2b18",
+  scoreBg: "#0d1f35",
+  scoreHigh: "#f59e0b",
+  scoreLow: "#545e6b",
 };
 
 const FONT = `'JetBrains Mono', 'SF Mono', 'Fira Code', monospace`;
@@ -169,6 +180,7 @@ export default function FocusApp() {
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const captureRef = useRef(null);
   const fileInputRef = useRef(null);
+  const autoFillRef = useRef({});
 
   // Load tasks from IndexedDB
   useEffect(() => {
@@ -189,6 +201,40 @@ export default function FocusApp() {
     window.addEventListener("beforeinstallprompt", handleBeforeInstall);
     return () => window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
   }, []);
+
+  // Auto-fill top 3 from backlog by priority score (once per context per day)
+  useEffect(() => {
+    if (screen !== "day" || !loaded) return;
+    const key = `${context}:${todayStr()}`;
+    if (autoFillRef.current[key]) return;
+    autoFillRef.current[key] = true;
+
+    const todayTop5 = tasks.filter(
+      (t) => t.status === "top5" && t.context === context && t.top5Date === todayStr()
+    );
+    const slotsNeeded = 3 - todayTop5.length;
+    if (slotsNeeded <= 0) return;
+
+    const candidates = tasks
+      .filter((t) => t.status === "backlog" && t.context === context)
+      .sort((a, b) => calcPriority(b) - calcPriority(a))
+      .slice(0, slotsNeeded);
+
+    if (candidates.length === 0) return;
+
+    candidates.forEach((task) => {
+      dbPut("tasks", { ...task, status: "top5", top5Date: todayStr() });
+    });
+    setTasks((prev) =>
+      prev.map((t) =>
+        candidates.find((c) => c.id === t.id)
+          ? { ...t, status: "top5", top5Date: todayStr() }
+          : t
+      )
+    );
+    setToast(`Auto-filled ${candidates.length} top task${candidates.length > 1 ? "s" : ""}`);
+    setTimeout(() => setToast(null), 2200);
+  }, [screen, context, loaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist task changes
   const saveTask = useCallback(async (task) => {
@@ -429,8 +475,8 @@ export default function FocusApp() {
       background: COLORS.bg,
       minHeight: "100vh",
       color: COLORS.text,
-      fontFamily: FONT,
-      fontSize: 13,
+      fontFamily: FONT_DISPLAY,
+      fontSize: 14,
       position: "relative",
       maxWidth: 480,
       margin: "0 auto",
@@ -443,12 +489,12 @@ export default function FocusApp() {
         @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes slideIn { from { transform: translateX(30px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         .focus-card { animation: slideUp 0.25s ease-out; }
         .focus-fade { animation: fadeIn 0.2s ease-out; }
         .focus-slide { animation: slideIn 0.3s ease-out; }
         .btn-choice {
-          padding: 12px 20px; border-radius: 10px; font-size: 13px;
+          padding: 13px 20px; border-radius: 12px; font-size: 14px;
           font-weight: 500; transition: all 0.15s ease;
           border: 1px solid ${COLORS.border}; background: ${COLORS.surface};
           text-align: center; width: 100%;
@@ -456,101 +502,130 @@ export default function FocusApp() {
         .btn-choice:hover { background: ${COLORS.surfaceHover}; border-color: ${COLORS.borderLight}; }
         .btn-choice:active { background: ${COLORS.surfaceActive}; transform: scale(0.98); }
         .btn-primary {
-          padding: 12px 24px; border-radius: 10px; font-size: 13px;
+          padding: 11px 22px; border-radius: 10px; font-size: 13px;
           font-weight: 600; background: ${COLORS.accent}; color: #000;
-          transition: all 0.15s ease;
+          transition: all 0.15s ease; letter-spacing: 0.2px;
         }
-        .btn-primary:hover { filter: brightness(1.1); }
+        .btn-primary:hover { background: ${COLORS.accentBright}; }
         .btn-primary:active { transform: scale(0.97); }
         .task-row {
           display: flex; align-items: center; gap: 12px;
-          padding: 14px 16px; border-radius: 10px;
+          padding: 14px 16px; border-radius: 12px;
           background: ${COLORS.surface}; border: 1px solid ${COLORS.border};
+          border-left-width: 3px;
           transition: all 0.15s ease; margin-bottom: 8px;
         }
         .task-row:hover { background: ${COLORS.surfaceHover}; }
         .check-circle {
-          width: 22px; height: 22px; border-radius: 50%;
+          width: 24px; height: 24px; border-radius: 50%;
           border: 2px solid ${COLORS.borderLight}; flex-shrink: 0;
           display: flex; align-items: center; justify-content: center;
           transition: all 0.15s ease; cursor: pointer;
         }
         .check-circle:hover { border-color: ${COLORS.success}; background: ${COLORS.successDim}; }
         .nav-item {
-          display: flex; flex-direction: column; align-items: center; gap: 4px;
-          padding: 8px 0; font-size: 10px; color: ${COLORS.textDim};
+          display: flex; flex-direction: column; align-items: center; gap: 3px;
+          padding: 8px 0 6px; font-size: 10px; color: ${COLORS.textDim};
           transition: color 0.15s ease; position: relative; flex: 1;
+          font-family: '${FONT_DISPLAY}';
         }
         .nav-item.active { color: ${COLORS.accent}; }
+        .nav-item.active::after {
+          content: ''; position: absolute; bottom: 2px;
+          width: 4px; height: 4px; border-radius: 50%;
+          background: ${COLORS.accent};
+        }
         .badge {
           position: absolute; top: 2px; right: calc(50% - 18px);
           background: ${COLORS.danger}; color: white; font-size: 9px;
-          font-weight: 600; padding: 1px 5px; border-radius: 8px; min-width: 16px;
-          text-align: center;
+          font-weight: 700; padding: 1px 5px; border-radius: 8px; min-width: 16px;
+          text-align: center; font-family: ${FONT};
         }
         .tag {
-          display: inline-block; padding: 3px 8px; border-radius: 6px;
-          font-size: 10px; font-weight: 500; letter-spacing: 0.3px;
+          display: inline-block; padding: 2px 7px; border-radius: 5px;
+          font-size: 10px; font-weight: 600; letter-spacing: 0.4px;
+          font-family: ${FONT};
         }
-        .progress-pip {
-          width: 8px; height: 8px; border-radius: 50%;
-          background: ${COLORS.border}; transition: background 0.3s ease;
+        .progress-seg {
+          height: 4px; border-radius: 2px; flex: 1;
+          background: ${COLORS.border}; transition: background 0.4s ease;
         }
-        .progress-pip.filled { background: ${COLORS.success}; }
+        .progress-seg.filled { background: ${COLORS.success}; }
+        .score-badge {
+          font-family: ${FONT}; font-size: 11px; font-weight: 700;
+          padding: 3px 8px; border-radius: 6px; flex-shrink: 0;
+        }
+        .rank-num {
+          font-family: ${FONT}; font-size: 11px; font-weight: 600;
+          color: ${COLORS.textDim}; min-width: 20px; text-align: right;
+          flex-shrink: 0;
+        }
         .overlay {
           position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-          background: rgba(0,0,0,0.7); display: flex; align-items: flex-end;
+          background: rgba(0,0,0,0.75); display: flex; align-items: flex-end;
           justify-content: center; z-index: 100; animation: fadeIn 0.15s ease-out;
         }
         .sheet {
-          background: ${COLORS.surface}; border-radius: 16px 16px 0 0;
-          padding: 24px 20px 32px; width: 100%; max-width: 480;
+          background: ${COLORS.surface}; border-radius: 20px 20px 0 0;
+          padding: 24px 20px 36px; width: 100%; max-width: 480px;
           animation: slideUp 0.25s ease-out; border-top: 1px solid ${COLORS.border};
         }
       `}</style>
 
       {/* HEADER */}
-      <div style={{
-        padding: "20px 20px 0", display: "flex", alignItems: "center",
-        justifyContent: "space-between",
-      }}>
-        <div>
+      <div style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+        <div style={{
+          padding: "18px 20px 16px", display: "flex", alignItems: "center",
+          justifyContent: "space-between",
+        }}>
+          <div>
+            <div style={{
+              fontFamily: FONT_DISPLAY, fontSize: 22, fontWeight: 700,
+              letterSpacing: "-0.5px", background: `linear-gradient(90deg, ${COLORS.text} 0%, ${COLORS.accentBright} 100%)`,
+              WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+              backgroundClip: "text",
+            }}>
+              FocusFlow
+            </div>
+            <div style={{ color: COLORS.textMuted, fontSize: 12, marginTop: 2, fontWeight: 500 }}>
+              {new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}
+            </div>
+          </div>
           <div style={{
-            fontFamily: FONT_DISPLAY, fontSize: 22, fontWeight: 700,
-            letterSpacing: "-0.5px",
+            display: "flex", gap: 3, background: COLORS.surface, borderRadius: 12,
+            padding: 3, border: `1px solid ${COLORS.border}`,
           }}>
-            FocusFlow
-          </div>
-          <div style={{ color: COLORS.textDim, fontSize: 11, marginTop: 2 }}>
-            {new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}
+            <button
+              onClick={() => setContext("work")}
+              style={{
+                padding: "7px 14px", borderRadius: 9, fontSize: 11, fontWeight: 700,
+                letterSpacing: "0.5px", transition: "all 0.15s ease", fontFamily: FONT,
+                background: context === "work" ? COLORS.workDim : "transparent",
+                color: context === "work" ? COLORS.work : COLORS.textDim,
+                border: context === "work" ? `1px solid ${COLORS.work}40` : "1px solid transparent",
+              }}
+            >
+              WORK
+            </button>
+            <button
+              onClick={() => setContext("personal")}
+              style={{
+                padding: "7px 14px", borderRadius: 9, fontSize: 11, fontWeight: 700,
+                letterSpacing: "0.5px", transition: "all 0.15s ease", fontFamily: FONT,
+                background: context === "personal" ? COLORS.personalDim : "transparent",
+                color: context === "personal" ? COLORS.personal : COLORS.textDim,
+                border: context === "personal" ? `1px solid ${COLORS.personal}40` : "1px solid transparent",
+              }}
+            >
+              PER
+            </button>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 4, background: COLORS.surface, borderRadius: 10, padding: 3, border: `1px solid ${COLORS.border}` }}>
-          <button
-            onClick={() => setContext("work")}
-            style={{
-              padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 600,
-              letterSpacing: "0.3px", transition: "all 0.15s ease",
-              background: context === "work" ? COLORS.workDim : "transparent",
-              color: context === "work" ? COLORS.work : COLORS.textDim,
-              border: context === "work" ? `1px solid ${COLORS.work}33` : "1px solid transparent",
-            }}
-          >
-            WORK
-          </button>
-          <button
-            onClick={() => setContext("personal")}
-            style={{
-              padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 600,
-              letterSpacing: "0.3px", transition: "all 0.15s ease",
-              background: context === "personal" ? COLORS.personalDim : "transparent",
-              color: context === "personal" ? COLORS.personal : COLORS.textDim,
-              border: context === "personal" ? `1px solid ${COLORS.personal}33` : "1px solid transparent",
-            }}
-          >
-            PERSONAL
-          </button>
-        </div>
+        {/* Gradient accent line */}
+        <div style={{
+          height: 2,
+          background: `linear-gradient(90deg, ${COLORS.accent}88 0%, ${COLORS.work}44 50%, transparent 100%)`,
+        }} />
       </div>
 
       {/* MAIN CONTENT */}
@@ -584,77 +659,93 @@ export default function FocusApp() {
             )}
 
             {/* Progress */}
-            <div style={{
-              display: "flex", alignItems: "center", gap: 12, marginBottom: 20,
-            }}>
-              <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 500 }}>
-                TODAY
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                {[0, 1, 2, 3, 4].map((i) => (
-                  <div key={i} className={`progress-pip${i < completedToday.length ? " filled" : ""}`} />
-                ))}
-              </div>
-              <div style={{ fontSize: 11, color: COLORS.textDim, marginLeft: "auto" }}>
-                {completedToday.length}/{top5Tasks.length + completedToday.length} done
-              </div>
-            </div>
+            {(() => {
+              const total = top5Tasks.length + completedToday.length;
+              const done = completedToday.length;
+              const allDone = total > 0 && done === total;
+              return (
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textDim, letterSpacing: "0.8px", fontFamily: FONT }}>
+                      TODAY
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: allDone ? COLORS.success : COLORS.textMuted }}>
+                      {allDone && total > 0 ? "All done" : `${done}/${total} done`}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {[0, 1, 2, 3, 4].map((i) => (
+                      <div key={i} className={`progress-seg${i < done ? " filled" : ""}`} />
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Top 5 */}
             {top5Tasks.length === 0 && completedToday.length === 0 ? (
               <div style={{
-                textAlign: "center", padding: "48px 20px",
+                textAlign: "center", padding: "52px 20px",
                 color: COLORS.textDim,
               }}>
-                <div style={{ fontSize: 32, marginBottom: 12 }}>
+                <div style={{ fontSize: 40, marginBottom: 14, letterSpacing: 6, color: COLORS.border }}>
                   {context === "work" ? "///" : "~~~"}
                 </div>
-                <div style={{ fontFamily: FONT_DISPLAY, fontSize: 16, fontWeight: 600, color: COLORS.textMuted, marginBottom: 8 }}>
-                  No tasks for today
+                <div style={{ fontFamily: FONT_DISPLAY, fontSize: 17, fontWeight: 600, color: COLORS.textMuted, marginBottom: 8 }}>
+                  Nothing here yet
                 </div>
-                <div style={{ fontSize: 12, lineHeight: 1.6 }}>
-                  Add tasks from your backlog or capture something new
+                <div style={{ fontSize: 13, lineHeight: 1.7, color: COLORS.textDim }}>
+                  Process your inbox to build a backlog —<br />your top 3 will auto-fill each morning.
                 </div>
               </div>
             ) : (
               <div>
-                {top5Tasks.map((task, i) => (
-                  <div key={task.id} className="task-row focus-card" style={{ animationDelay: `${i * 50}ms` }}>
-                    <div className="check-circle" onClick={() => completeTask(task)}>
-                      <Icons.check size={12} color="transparent" />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{
-                        fontSize: 13, fontWeight: 500,
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                      }}>
-                        {task.title}
+                {top5Tasks.map((task, i) => {
+                  const borderColor = task.importance === "critical" ? COLORS.danger
+                    : task.importance === "high" ? COLORS.warning
+                    : COLORS.border;
+                  return (
+                    <div key={task.id} className="task-row focus-card" style={{
+                      animationDelay: `${i * 50}ms`,
+                      borderLeftColor: borderColor,
+                    }}>
+                      <span className="rank-num">#{i + 1}</span>
+                      <div className="check-circle" onClick={() => completeTask(task)}>
+                        <Icons.check size={12} color="transparent" />
                       </div>
-                      <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                        {task.importance === "critical" && (
-                          <span className="tag" style={{ background: COLORS.dangerDim, color: COLORS.danger }}>critical</span>
-                        )}
-                        {task.importance === "high" && (
-                          <span className="tag" style={{ background: COLORS.warningDim, color: COLORS.warning }}>high</span>
-                        )}
-                        {task.effort && (
-                          <span className="tag" style={{ background: `${COLORS.border}`, color: COLORS.textMuted }}>{task.effort}</span>
-                        )}
-                        {task.deadline && (
-                          <span className="tag" style={{
-                            background: daysUntil(task.deadline) <= 1 ? COLORS.dangerDim : COLORS.accentDim,
-                            color: daysUntil(task.deadline) <= 1 ? COLORS.danger : COLORS.accent,
-                          }}>
-                            {formatDate(task.deadline)}
-                          </span>
-                        )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{
+                          fontSize: 14, fontWeight: 500,
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}>
+                          {task.title}
+                        </div>
+                        <div style={{ display: "flex", gap: 5, marginTop: 6 }}>
+                          {task.importance === "critical" && (
+                            <span className="tag" style={{ background: COLORS.dangerDim, color: COLORS.danger }}>critical</span>
+                          )}
+                          {task.importance === "high" && (
+                            <span className="tag" style={{ background: COLORS.warningDim, color: COLORS.warning }}>high</span>
+                          )}
+                          {task.effort && (
+                            <span className="tag" style={{ background: COLORS.border, color: COLORS.textMuted }}>{task.effort}</span>
+                          )}
+                          {task.deadline && (
+                            <span className="tag" style={{
+                              background: daysUntil(task.deadline) <= 1 ? COLORS.dangerDim : COLORS.accentDim,
+                              color: daysUntil(task.deadline) <= 1 ? COLORS.danger : COLORS.accent,
+                            }}>
+                              {formatDate(task.deadline)}
+                            </span>
+                          )}
+                        </div>
                       </div>
+                      <button onClick={() => sendToBacklog(task)} style={{ padding: 4, opacity: 0.35 }} title="Remove from today">
+                        <Icons.x size={14} />
+                      </button>
                     </div>
-                    <button onClick={() => sendToBacklog(task)} style={{ padding: 4, opacity: 0.4 }} title="Remove from Top 5">
-                      <Icons.x size={14} />
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
 
                 {/* Completed today */}
                 {completedToday.map((task) => (
@@ -931,42 +1022,55 @@ export default function FocusApp() {
                     </div>
                   </div>
                 ) : (
-                  backlogTasks.map((task, i) => (
-                    <div key={task.id} className="task-row focus-card" style={{ animationDelay: `${i * 30}ms` }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{
-                          fontSize: 13, fontWeight: 500,
-                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                        }}>
-                          {task.title}
+                  backlogTasks.map((task, i) => {
+                    const score = calcPriority(task);
+                    const scoreColor = score >= 40 ? COLORS.accent : score >= 30 ? COLORS.scoreHigh : COLORS.scoreLow;
+                    const scoreBg = score >= 40 ? COLORS.scoreBg : score >= 30 ? COLORS.warningDim : COLORS.border;
+                    const borderColor = task.importance === "critical" ? COLORS.danger
+                      : task.importance === "high" ? COLORS.warning
+                      : COLORS.border;
+                    return (
+                      <div key={task.id} className="task-row focus-card" style={{
+                        animationDelay: `${i * 30}ms`, borderLeftColor: borderColor,
+                      }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{
+                            fontSize: 14, fontWeight: 500,
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          }}>
+                            {task.title}
+                          </div>
+                          <div style={{ display: "flex", gap: 5, marginTop: 6 }}>
+                            {task.importance === "critical" && (
+                              <span className="tag" style={{ background: COLORS.dangerDim, color: COLORS.danger }}>critical</span>
+                            )}
+                            {task.importance === "high" && (
+                              <span className="tag" style={{ background: COLORS.warningDim, color: COLORS.warning }}>high</span>
+                            )}
+                            <span className="tag" style={{ background: COLORS.border, color: COLORS.textMuted }}>{task.effort}</span>
+                            {task.deadline && (
+                              <span className="tag" style={{
+                                background: daysUntil(task.deadline) <= 1 ? COLORS.dangerDim : COLORS.accentDim,
+                                color: daysUntil(task.deadline) <= 1 ? COLORS.danger : COLORS.accent,
+                              }}>
+                                {formatDate(task.deadline)}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                          {task.importance === "critical" && (
-                            <span className="tag" style={{ background: COLORS.dangerDim, color: COLORS.danger }}>critical</span>
-                          )}
-                          {task.importance === "high" && (
-                            <span className="tag" style={{ background: COLORS.warningDim, color: COLORS.warning }}>high</span>
-                          )}
-                          <span className="tag" style={{ background: COLORS.border, color: COLORS.textMuted }}>{task.effort}</span>
-                          {task.deadline && (
-                            <span className="tag" style={{
-                              background: daysUntil(task.deadline) <= 1 ? COLORS.dangerDim : COLORS.accentDim,
-                              color: daysUntil(task.deadline) <= 1 ? COLORS.danger : COLORS.accent,
-                            }}>
-                              {formatDate(task.deadline)}
-                            </span>
-                          )}
-                        </div>
+                        <span className="score-badge" style={{ background: scoreBg, color: scoreColor }}>
+                          {score}
+                        </span>
+                        <button
+                          onClick={() => addToTop5(task)}
+                          className="btn-primary"
+                          style={{ fontSize: 10, padding: "6px 12px", flexShrink: 0 }}
+                        >
+                          + Today
+                        </button>
                       </div>
-                      <button
-                        onClick={() => addToTop5(task)}
-                        className="btn-primary"
-                        style={{ fontSize: 10, padding: "6px 12px", flexShrink: 0 }}
-                      >
-                        + Top 5
-                      </button>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </>
             )}
@@ -1208,21 +1312,21 @@ export default function FocusApp() {
       <div style={{
         position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)",
         width: "100%", maxWidth: 480,
-        background: `linear-gradient(transparent, ${COLORS.bg} 20%)`,
-        paddingTop: 20,
       }}>
         <div style={{
           display: "flex", alignItems: "stretch",
-          background: COLORS.surface,
+          background: "rgba(19, 23, 28, 0.88)",
+          backdropFilter: "blur(16px)",
+          WebkitBackdropFilter: "blur(16px)",
           borderTop: `1px solid ${COLORS.border}`,
-          padding: "6px 0 env(safe-area-inset-bottom, 8px)",
+          padding: "4px 0 env(safe-area-inset-bottom, 8px)",
         }}>
           <button className={`nav-item${screen === "day" ? " active" : ""}`} onClick={() => setScreen("day")}>
-            <Icons.sun size={20} />
+            <Icons.sun size={22} />
             <span>Today</span>
           </button>
           <button className={`nav-item${screen === "inbox" ? " active" : ""}`} onClick={() => setScreen("inbox")}>
-            <Icons.inbox size={20} />
+            <Icons.inbox size={22} />
             <span>Inbox</span>
             {inboxTasks.length > 0 && <span className="badge">{inboxTasks.length}</span>}
           </button>
@@ -1233,21 +1337,21 @@ export default function FocusApp() {
             }}
           >
             <div style={{
-              width: 44, height: 44, borderRadius: 12,
-              background: COLORS.accent, display: "flex",
-              alignItems: "center", justifyContent: "center",
-              boxShadow: `0 0 20px ${COLORS.accent}44`,
-              transition: "transform 0.15s ease",
+              width: 46, height: 46, borderRadius: 14,
+              background: `linear-gradient(135deg, ${COLORS.accent} 0%, ${COLORS.accentBright} 100%)`,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: `0 4px 20px ${COLORS.accent}55`,
+              transition: "transform 0.15s ease, box-shadow 0.15s ease",
             }}>
               <Icons.plus size={22} color="#000" />
             </div>
           </button>
           <button className={`nav-item${screen === "backlog" ? " active" : ""}`} onClick={() => setScreen("backlog")}>
-            <Icons.list size={20} />
+            <Icons.list size={22} />
             <span>Backlog</span>
           </button>
           <button className={`nav-item${screen === "settings" ? " active" : ""}`} onClick={() => setScreen("settings")}>
-            <Icons.settings size={20} />
+            <Icons.settings size={22} />
             <span>Settings</span>
           </button>
         </div>
