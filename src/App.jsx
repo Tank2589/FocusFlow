@@ -175,10 +175,14 @@ export default function FocusApp() {
   const [processingAnswers, setProcessingAnswers] = useState({});
   const [swapTask, setSwapTask] = useState(null); // task attempting to be added to top5
   const [backlogTab, setBacklogTab] = useState("backlog"); // backlog | someday
+  const [backlogFilter, setBacklogFilter] = useState("all"); // all | critical | deadline | quick
+  const [editingTaskId, setEditingTaskId] = useState(null);
+  const [editingTitle, setEditingTitle] = useState("");
   const [toast, setToast] = useState(null);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const captureRef = useRef(null);
+  const editInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const autoFillRef = useRef({});
 
@@ -412,6 +416,27 @@ export default function FocusApp() {
 
   const rescheduleTask = (task) => {
     saveTask({ ...task, status: "backlog", top5Date: null });
+  };
+
+  // Inline editing
+  const startEdit = (task) => {
+    setEditingTaskId(task.id);
+    setEditingTitle(task.title);
+    setTimeout(() => editInputRef.current?.focus(), 30);
+  };
+
+  const commitEdit = (task) => {
+    const trimmed = editingTitle.trim();
+    if (trimmed && trimmed !== task.title) {
+      saveTask({ ...task, title: trimmed });
+    }
+    setEditingTaskId(null);
+    setEditingTitle("");
+  };
+
+  const cancelEdit = () => {
+    setEditingTaskId(null);
+    setEditingTitle("");
   };
 
   // Export
@@ -714,12 +739,34 @@ export default function FocusApp() {
                         <Icons.check size={12} color="transparent" />
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{
-                          fontSize: 14, fontWeight: 500,
-                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                        }}>
-                          {task.title}
-                        </div>
+                        {editingTaskId === task.id ? (
+                          <input
+                            ref={editInputRef}
+                            value={editingTitle}
+                            onChange={(e) => setEditingTitle(e.target.value)}
+                            onBlur={() => commitEdit(task)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") commitEdit(task);
+                              if (e.key === "Escape") cancelEdit();
+                            }}
+                            style={{
+                              width: "100%", background: COLORS.bg, border: `1px solid ${COLORS.accent}`,
+                              borderRadius: 6, padding: "3px 8px", color: COLORS.text,
+                              fontSize: 14, fontWeight: 500, fontFamily: FONT_DISPLAY, outline: "none",
+                            }}
+                          />
+                        ) : (
+                          <div
+                            onClick={() => startEdit(task)}
+                            style={{
+                              fontSize: 14, fontWeight: 500, cursor: "text",
+                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                            }}
+                            title="Tap to edit"
+                          >
+                            {task.title}
+                          </div>
+                        )}
                         <div style={{ display: "flex", gap: 5, marginTop: 6 }}>
                           {task.importance === "critical" && (
                             <span className="tag" style={{ background: COLORS.dangerDim, color: COLORS.danger }}>critical</span>
@@ -984,7 +1031,7 @@ export default function FocusApp() {
               border: `1px solid ${COLORS.border}`,
             }}>
               <button
-                onClick={() => setBacklogTab("backlog")}
+                onClick={() => { setBacklogTab("backlog"); setBacklogFilter("all"); }}
                 style={{
                   flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 600,
                   transition: "all 0.15s ease", textAlign: "center",
@@ -1012,17 +1059,61 @@ export default function FocusApp() {
             {/* Backlog tab */}
             {backlogTab === "backlog" && (
               <>
-                {backlogTasks.length === 0 ? (
-                  <div style={{ textAlign: "center", padding: "48px 20px", color: COLORS.textDim }}>
-                    <div style={{ fontFamily: FONT_DISPLAY, fontSize: 16, fontWeight: 600, color: COLORS.textMuted, marginBottom: 8 }}>
-                      Backlog is empty
+                {/* Filter chips */}
+                {backlogTasks.length > 0 && (() => {
+                  const chips = [
+                    { id: "all", label: "All", count: backlogTasks.length },
+                    { id: "critical", label: "Critical", count: backlogTasks.filter(t => t.importance === "critical").length },
+                    { id: "deadline", label: "Deadline", count: backlogTasks.filter(t => t.deadline).length },
+                    { id: "quick", label: "Quick wins", count: backlogTasks.filter(t => t.effort === "small").length },
+                  ].filter(c => c.id === "all" || c.count > 0);
+                  return (
+                    <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+                      {chips.map((chip) => {
+                        const active = backlogFilter === chip.id;
+                        return (
+                          <button
+                            key={chip.id}
+                            onClick={() => setBacklogFilter(chip.id)}
+                            style={{
+                              padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+                              transition: "all 0.15s ease", cursor: "pointer",
+                              background: active ? COLORS.accentDim : COLORS.surface,
+                              color: active ? COLORS.accent : COLORS.textMuted,
+                              border: active ? `1px solid ${COLORS.accent}55` : `1px solid ${COLORS.border}`,
+                            }}
+                          >
+                            {chip.label}
+                            {chip.id !== "all" && (
+                              <span style={{ marginLeft: 5, fontFamily: FONT, fontSize: 10, opacity: 0.8 }}>
+                                {chip.count}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
-                    <div style={{ fontSize: 12 }}>
-                      Process inbox items to build your backlog
+                  );
+                })()}
+
+                {(() => {
+                  const filtered = backlogTasks.filter((t) => {
+                    if (backlogFilter === "critical") return t.importance === "critical";
+                    if (backlogFilter === "deadline") return !!t.deadline;
+                    if (backlogFilter === "quick") return t.effort === "small";
+                    return true;
+                  });
+                  return filtered.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "48px 20px", color: COLORS.textDim }}>
+                      <div style={{ fontFamily: FONT_DISPLAY, fontSize: 16, fontWeight: 600, color: COLORS.textMuted, marginBottom: 8 }}>
+                        {backlogTasks.length === 0 ? "Backlog is empty" : "No matches"}
+                      </div>
+                      <div style={{ fontSize: 12 }}>
+                        {backlogTasks.length === 0 ? "Process inbox items to build your backlog" : "Try a different filter"}
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  backlogTasks.map((task, i) => {
+                  ) : (
+                    filtered.map((task, i) => {
                     const score = calcPriority(task);
                     const scoreColor = score >= 40 ? COLORS.accent : score >= 30 ? COLORS.scoreHigh : COLORS.scoreLow;
                     const scoreBg = score >= 40 ? COLORS.scoreBg : score >= 30 ? COLORS.warningDim : COLORS.border;
@@ -1034,12 +1125,34 @@ export default function FocusApp() {
                         animationDelay: `${i * 30}ms`, borderLeftColor: borderColor,
                       }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{
-                            fontSize: 14, fontWeight: 500,
-                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                          }}>
-                            {task.title}
-                          </div>
+                          {editingTaskId === task.id ? (
+                            <input
+                              ref={editInputRef}
+                              value={editingTitle}
+                              onChange={(e) => setEditingTitle(e.target.value)}
+                              onBlur={() => commitEdit(task)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") commitEdit(task);
+                                if (e.key === "Escape") cancelEdit();
+                              }}
+                              style={{
+                                width: "100%", background: COLORS.bg, border: `1px solid ${COLORS.accent}`,
+                                borderRadius: 6, padding: "3px 8px", color: COLORS.text,
+                                fontSize: 14, fontWeight: 500, fontFamily: FONT_DISPLAY, outline: "none",
+                              }}
+                            />
+                          ) : (
+                            <div
+                              onClick={() => startEdit(task)}
+                              style={{
+                                fontSize: 14, fontWeight: 500, cursor: "text",
+                                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                              }}
+                              title="Tap to edit"
+                            >
+                              {task.title}
+                            </div>
+                          )}
                           <div style={{ display: "flex", gap: 5, marginTop: 6 }}>
                             {task.importance === "critical" && (
                               <span className="tag" style={{ background: COLORS.dangerDim, color: COLORS.danger }}>critical</span>
@@ -1071,7 +1184,8 @@ export default function FocusApp() {
                       </div>
                     );
                   })
-                )}
+                  );
+                })()}
               </>
             )}
 
