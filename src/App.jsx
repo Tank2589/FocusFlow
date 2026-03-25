@@ -179,6 +179,7 @@ export default function FocusApp() {
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [keyboardOffset, setKeyboardOffset] = useState(0);
+  const [pendingDeadline, setPendingDeadline] = useState("");
   const [toast, setToast] = useState(null);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
@@ -206,6 +207,12 @@ export default function FocusApp() {
     window.addEventListener("beforeinstallprompt", handleBeforeInstall);
     return () => window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
   }, []);
+
+  // Reset pending deadline each time the deadline_date step becomes active
+  useEffect(() => {
+    if (getProcessingStep() === "deadline_date") setPendingDeadline("");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [processingAnswers]);
 
   // Lift capture sheet above soft keyboard using visualViewport
   useEffect(() => {
@@ -1009,13 +1016,22 @@ export default function FocusApp() {
                   </div>
                   <input
                     type="date"
-                    onChange={(e) => handleProcessAnswer("deadline_date", e.target.value)}
+                    value={pendingDeadline}
+                    onChange={(e) => setPendingDeadline(e.target.value)}
                     style={{
                       width: "100%", padding: "14px 16px", borderRadius: 10,
                       background: COLORS.surface, border: `1px solid ${COLORS.border}`,
                       color: COLORS.text, fontSize: 14, fontFamily: FONT,
                     }}
                   />
+                  <button
+                    className="btn-primary"
+                    disabled={!pendingDeadline}
+                    onClick={() => handleProcessAnswer("deadline_date", pendingDeadline)}
+                    style={{ marginTop: 12, width: "100%", opacity: pendingDeadline ? 1 : 0.4 }}
+                  >
+                    Set due date
+                  </button>
                 </div>
               );
 
