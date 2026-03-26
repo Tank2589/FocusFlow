@@ -44,6 +44,16 @@ function daysUntil(dateStr) {
   return Math.ceil((target - now) / (1000 * 60 * 60 * 24));
 }
 
+function relativeDeadline(dateStr) {
+  if (!dateStr) return "";
+  const days = daysUntil(dateStr);
+  if (days < 0) return "Overdue";
+  if (days === 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  if (days <= 6) return `${days}d`;
+  return formatDate(dateStr);
+}
+
 // ============================================================
 // ICONS (inline SVG components)
 // ============================================================
@@ -113,6 +123,7 @@ const Icons = {
       <polyline points="21 16 21 21 16 21" /><line x1="15" y1="15" x2="21" y2="21" />
     </svg>
   ),
+  edit: (p) => <Icon d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" {...p} />,
   trash: (p) => (
     <svg width={p?.size || 20} height={p?.size || 20} viewBox="0 0 24 24" fill="none" stroke={p?.color || "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
@@ -180,6 +191,8 @@ export default function FocusApp() {
   const [editingTitle, setEditingTitle] = useState("");
   const [keyboardOffset, setKeyboardOffset] = useState(0);
   const [pendingDeadline, setPendingDeadline] = useState("");
+  const [metaTask, setMetaTask] = useState(null);
+  const [pendingMeta, setPendingMeta] = useState({});
   const [toast, setToast] = useState(null);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
@@ -324,11 +337,44 @@ export default function FocusApp() {
     showToast("Captured");
   };
 
+  const handleCaptureToday = () => {
+    const text = captureText.trim();
+    if (!text) return;
+    const task = {
+      id: genId(),
+      title: text,
+      status: "backlog",
+      context,
+      effort: "medium",
+      importance: "normal",
+      deadline: null,
+      top5Date: null,
+      completedDate: null,
+      createdAt: new Date().toISOString(),
+    };
+    if (top5Tasks.length < 5) {
+      saveTask({ ...task, status: "top5", top5Date: todayStr() });
+      showToast("Added to today");
+    } else {
+      saveTask(task);
+      setSwapTask({ ...task, status: "top5", top5Date: todayStr() });
+    }
+    setCaptureText("");
+    setCaptureOpen(false);
+  };
+
   // Processing
   const startProcessing = () => {
     if (inboxTasks.length === 0) return;
     const ids = inboxTasks.map((t) => t.id);
     setProcessingIds(ids);
+    setProcessingCursor(0);
+    setProcessingAnswers({});
+    setScreen("processing");
+  };
+
+  const startProcessingSingle = (taskId) => {
+    setProcessingIds([taskId]);
     setProcessingCursor(0);
     setProcessingAnswers({});
     setScreen("processing");
@@ -395,9 +441,10 @@ export default function FocusApp() {
   const advanceProcessing = () => {
     const nextIdx = processingCursor + 1;
     if (nextIdx >= processingIds.length) {
-      setScreen("day");
+      const single = processingIds.length === 1;
+      setScreen(single ? "inbox" : "day");
       setProcessingIds([]);
-      showToast("Inbox clear");
+      if (!single) showToast("Inbox clear");
     } else {
       setProcessingCursor(nextIdx);
       setProcessingAnswers({});
@@ -465,6 +512,29 @@ export default function FocusApp() {
     setEditingTitle("");
   };
 
+  const openMetaEditor = (task) => {
+    setMetaTask(task);
+    setPendingMeta({
+      context: task.context || "work",
+      importance: task.importance || "normal",
+      effort: task.effort || "medium",
+      deadline: task.deadline || "",
+    });
+  };
+
+  const saveMetaEdit = () => {
+    if (!metaTask) return;
+    saveTask({
+      ...metaTask,
+      context: pendingMeta.context,
+      importance: pendingMeta.importance,
+      effort: pendingMeta.effort,
+      deadline: pendingMeta.deadline || null,
+    });
+    setMetaTask(null);
+    showToast("Updated");
+  };
+
   // Export
   const exportData = () => {
     const data = JSON.stringify(tasks, null, 2);
@@ -502,9 +572,7 @@ export default function FocusApp() {
   const getProcessingStep = () => {
     const a = processingAnswers;
     if (!a.actionable) return "actionable";
-    if (!a.context) return "context";
-    if (!a.effort) return "effort";
-    if (!a.importance) return "importance";
+    if (!a.context || !a.effort || !a.importance || !a._detailsDone) return "details";
     if (!a.has_deadline) return "has_deadline";
     if (a.has_deadline === "yes" && !a.deadline_date) return "deadline_date";
     return "done";
@@ -943,55 +1011,66 @@ export default function FocusApp() {
                 </div>
               );
 
-              if (step === "context") return (
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, fontFamily: FONT_DISPLAY }}>
-                    Which context?
-                  </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button className="btn-choice" onClick={() => handleProcessAnswer("context", "work")} style={{ flex: 1 }}>
-                      <span style={{ color: COLORS.work }}>Work</span>
+              if (step === "details") {
+                const sel = (field, value) => setProcessingAnswers(prev => ({ ...prev, [field]: value }));
+                const { context: ctx, effort: eff, importance: imp } = processingAnswers;
+                const allSet = ctx && eff && imp;
+                return (
+                  <div>
+                    <div style={{ marginBottom: 20 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textDim, letterSpacing: "0.8px", marginBottom: 10 }}>CONTEXT</div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        {[["work", "Work", COLORS.work], ["personal", "Personal", COLORS.personal]].map(([v, label, color]) => (
+                          <button key={v} className="btn-choice" onClick={() => sel("context", v)} style={{
+                            flex: 1,
+                            background: ctx === v ? COLORS.accentDim : COLORS.surface,
+                            borderColor: ctx === v ? `${COLORS.accent}55` : COLORS.border,
+                          }}>
+                            <span style={{ color: ctx === v ? color : COLORS.textMuted }}>{label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ marginBottom: 20 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textDim, letterSpacing: "0.8px", marginBottom: 10 }}>EFFORT</div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        {["small", "medium", "large"].map(v => (
+                          <button key={v} className="btn-choice" onClick={() => sel("effort", v)} style={{
+                            flex: 1,
+                            background: eff === v ? COLORS.accentDim : COLORS.surface,
+                            borderColor: eff === v ? `${COLORS.accent}55` : COLORS.border,
+                            color: eff === v ? COLORS.accent : COLORS.textMuted,
+                          }}>
+                            {v}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ marginBottom: 24 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textDim, letterSpacing: "0.8px", marginBottom: 10 }}>IMPORTANCE</div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        {[["critical", COLORS.danger], ["high", COLORS.warning], ["normal", COLORS.textMuted]].map(([v, color]) => (
+                          <button key={v} className="btn-choice" onClick={() => sel("importance", v)} style={{
+                            flex: 1,
+                            background: imp === v ? COLORS.accentDim : COLORS.surface,
+                            borderColor: imp === v ? `${COLORS.accent}55` : COLORS.border,
+                          }}>
+                            <span style={{ color: imp === v ? color : COLORS.textMuted }}>{v}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <button
+                      className="btn-primary"
+                      disabled={!allSet}
+                      onClick={() => setProcessingAnswers(prev => ({ ...prev, _detailsDone: true }))}
+                      style={{ width: "100%", opacity: allSet ? 1 : 0.4 }}
+                    >
+                      Continue
                     </button>
-                    <button className="btn-choice" onClick={() => handleProcessAnswer("context", "personal")} style={{ flex: 1 }}>
-                      <span style={{ color: COLORS.personal }}>Personal</span>
-                    </button>
                   </div>
-                </div>
-              );
-
-              if (step === "effort") return (
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, fontFamily: FONT_DISPLAY }}>
-                    How much effort?
-                  </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {["small", "medium", "large"].map((e) => (
-                      <button key={e} className="btn-choice" onClick={() => handleProcessAnswer("effort", e)} style={{ flex: 1, textTransform: "capitalize" }}>
-                        {e}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              );
-
-              if (step === "importance") return (
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, fontFamily: FONT_DISPLAY }}>
-                    How important is this?
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    <button className="btn-choice" onClick={() => handleProcessAnswer("importance", "critical")} style={{ borderColor: `${COLORS.danger}44` }}>
-                      <span style={{ color: COLORS.danger }}>Critical</span>
-                    </button>
-                    <button className="btn-choice" onClick={() => handleProcessAnswer("importance", "high")} style={{ borderColor: `${COLORS.warning}44` }}>
-                      <span style={{ color: COLORS.warning }}>High</span>
-                    </button>
-                    <button className="btn-choice" onClick={() => handleProcessAnswer("importance", "normal")}>
-                      Normal
-                    </button>
-                  </div>
-                </div>
-              );
+                );
+              }
 
               if (step === "has_deadline") return (
                 <div>
@@ -1040,9 +1119,9 @@ export default function FocusApp() {
 
             {/* Progress dots */}
             <div style={{ display: "flex", justifyContent: "center", gap: 6, marginTop: 32 }}>
-              {["actionable", "context", "effort", "importance", "has_deadline"].map((s, i) => {
+              {["actionable", "details", "has_deadline"].map((s, i) => {
                 const step = getProcessingStep();
-                const steps = ["actionable", "context", "effort", "importance", "has_deadline"];
+                const steps = ["actionable", "details", "has_deadline"];
                 const currentIdx = steps.indexOf(step);
                 return (
                   <div key={s} style={{
