@@ -876,11 +876,14 @@ export default function FocusApp() {
                               background: daysUntil(task.deadline) <= 1 ? COLORS.dangerDim : COLORS.accentDim,
                               color: daysUntil(task.deadline) <= 1 ? COLORS.danger : COLORS.accent,
                             }}>
-                              {formatDate(task.deadline)}
+                              {relativeDeadline(task.deadline)}
                             </span>
                           )}
                         </div>
                       </div>
+                      <button onClick={() => openMetaEditor(task)} style={{ padding: 4, opacity: 0.35 }} title="Edit task">
+                        <Icons.edit size={14} />
+                      </button>
                       <button onClick={() => sendToBacklog(task)} style={{ padding: 4, opacity: 0.35 }} title="Remove from today">
                         <Icons.x size={14} />
                       </button>
@@ -951,6 +954,13 @@ export default function FocusApp() {
                       {formatDate(task.createdAt?.slice(0, 10))}
                     </div>
                   </div>
+                  <button
+                    className="btn-primary"
+                    onClick={() => startProcessingSingle(task.id)}
+                    style={{ fontSize: 10, padding: "5px 10px", flexShrink: 0 }}
+                  >
+                    Process
+                  </button>
                   <button onClick={() => removeTask(task.id)} style={{ padding: 4, opacity: 0.4 }} title="Delete">
                     <Icons.trash size={14} />
                   </button>
@@ -1280,7 +1290,7 @@ export default function FocusApp() {
                                 background: daysUntil(task.deadline) <= 1 ? COLORS.dangerDim : COLORS.accentDim,
                                 color: daysUntil(task.deadline) <= 1 ? COLORS.danger : COLORS.accent,
                               }}>
-                                {formatDate(task.deadline)}
+                                {relativeDeadline(task.deadline)}
                               </span>
                             )}
                           </div>
@@ -1288,6 +1298,9 @@ export default function FocusApp() {
                         <span className="score-badge" style={{ background: scoreBg, color: scoreColor }}>
                           {score}
                         </span>
+                        <button onClick={() => openMetaEditor(task)} style={{ padding: "6px 8px", opacity: 0.5, flexShrink: 0 }} title="Edit task">
+                          <Icons.edit size={13} />
+                        </button>
                         <button
                           onClick={() => addToTop5(task)}
                           className="btn-primary"
@@ -1619,14 +1632,27 @@ export default function FocusApp() {
                 resize: "none", outline: "none",
               }}
             />
-            <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+            <div style={{ marginTop: 12, display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button
+                onClick={handleCaptureToday}
+                disabled={!captureText.trim()}
+                style={{
+                  padding: "11px 16px", borderRadius: 10, fontSize: 13, fontWeight: 600,
+                  background: COLORS.accentDim, color: COLORS.accent,
+                  border: `1px solid ${COLORS.accent}33`,
+                  opacity: captureText.trim() ? 1 : 0.4,
+                  transition: "all 0.15s ease",
+                }}
+              >
+                + Today
+              </button>
               <button
                 className="btn-primary"
                 onClick={handleCapture}
                 disabled={!captureText.trim()}
                 style={{ opacity: captureText.trim() ? 1 : 0.4 }}
               >
-                Capture
+                Inbox
               </button>
             </div>
             <div style={{ marginTop: 10, fontSize: 10, color: COLORS.textDim, textAlign: "center" }}>
@@ -1671,6 +1697,113 @@ export default function FocusApp() {
               }}
             >
               Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== META EDITOR SHEET ==================== */}
+      {metaTask && (
+        <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) setMetaTask(null); }}>
+          <div className="sheet">
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 16, fontWeight: 600 }}>Edit task</div>
+              <button onClick={() => setMetaTask(null)} style={{ padding: 4 }}>
+                <Icons.x size={18} color={COLORS.textDim} />
+              </button>
+            </div>
+            <div style={{
+              fontSize: 13, fontWeight: 500, color: COLORS.textMuted,
+              marginBottom: 20, padding: "12px 14px", borderRadius: 10,
+              background: COLORS.bg, border: `1px solid ${COLORS.border}`,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>
+              {metaTask.title}
+            </div>
+
+            {/* Context */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textDim, letterSpacing: "0.8px", marginBottom: 8 }}>CONTEXT</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {[["work", "Work", COLORS.work], ["personal", "Personal", COLORS.personal]].map(([v, label, color]) => (
+                  <button key={v} onClick={() => setPendingMeta(m => ({ ...m, context: v }))} style={{
+                    flex: 1, padding: "10px 0", borderRadius: 10, fontSize: 13, fontWeight: 600,
+                    background: pendingMeta.context === v ? COLORS.accentDim : COLORS.surface,
+                    border: `1px solid ${pendingMeta.context === v ? `${COLORS.accent}55` : COLORS.border}`,
+                    color: pendingMeta.context === v ? color : COLORS.textMuted,
+                    transition: "all 0.15s ease",
+                  }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Importance */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textDim, letterSpacing: "0.8px", marginBottom: 8 }}>IMPORTANCE</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {[["critical", COLORS.danger], ["high", COLORS.warning], ["normal", COLORS.textMuted]].map(([v, color]) => (
+                  <button key={v} onClick={() => setPendingMeta(m => ({ ...m, importance: v }))} style={{
+                    flex: 1, padding: "10px 0", borderRadius: 10, fontSize: 13, fontWeight: 600,
+                    background: pendingMeta.importance === v ? COLORS.accentDim : COLORS.surface,
+                    border: `1px solid ${pendingMeta.importance === v ? `${COLORS.accent}55` : COLORS.border}`,
+                    color: pendingMeta.importance === v ? color : COLORS.textMuted,
+                    transition: "all 0.15s ease",
+                  }}>
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Effort */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textDim, letterSpacing: "0.8px", marginBottom: 8 }}>EFFORT</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {["small", "medium", "large"].map(v => (
+                  <button key={v} onClick={() => setPendingMeta(m => ({ ...m, effort: v }))} style={{
+                    flex: 1, padding: "10px 0", borderRadius: 10, fontSize: 13, fontWeight: 600,
+                    background: pendingMeta.effort === v ? COLORS.accentDim : COLORS.surface,
+                    border: `1px solid ${pendingMeta.effort === v ? `${COLORS.accent}55` : COLORS.border}`,
+                    color: pendingMeta.effort === v ? COLORS.accent : COLORS.textMuted,
+                    transition: "all 0.15s ease",
+                  }}>
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Deadline */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textDim, letterSpacing: "0.8px", marginBottom: 8 }}>DUE DATE</div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  type="date"
+                  value={pendingMeta.deadline || ""}
+                  onChange={(e) => setPendingMeta(m => ({ ...m, deadline: e.target.value }))}
+                  style={{
+                    flex: 1, padding: "10px 14px", borderRadius: 10,
+                    background: COLORS.bg, border: `1px solid ${COLORS.border}`,
+                    color: COLORS.text, fontSize: 13, fontFamily: FONT,
+                  }}
+                />
+                {pendingMeta.deadline && (
+                  <button
+                    onClick={() => setPendingMeta(m => ({ ...m, deadline: "" }))}
+                    style={{ padding: "10px 14px", borderRadius: 10, fontSize: 12, fontWeight: 600,
+                      background: COLORS.dangerDim, color: COLORS.danger,
+                      border: `1px solid ${COLORS.danger}33` }}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <button className="btn-primary" onClick={saveMetaEdit} style={{ width: "100%" }}>
+              Save changes
             </button>
           </div>
         </div>
