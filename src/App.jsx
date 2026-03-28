@@ -54,6 +54,19 @@ function relativeDeadline(dateStr) {
   return formatDate(dateStr);
 }
 
+function tomorrowStr() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function nextWeekday(dayIndex) { // 0=Sun … 6=Sat
+  const d = new Date();
+  const diff = (dayIndex - d.getDay() + 7) % 7 || 7;
+  d.setDate(d.getDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
+
 // ============================================================
 // ICONS (inline SVG components)
 // ============================================================
@@ -193,6 +206,9 @@ export default function FocusApp() {
   const [pendingDeadline, setPendingDeadline] = useState("");
   const [metaTask, setMetaTask] = useState(null);
   const [pendingMeta, setPendingMeta] = useState({});
+  const [snoozeTask, setSnoozeTask] = useState(null);
+  const [pendingSnooze, setPendingSnooze] = useState("");
+  const [showSnoozed, setShowSnoozed] = useState(false);
   const [toast, setToast] = useState(null);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
@@ -302,8 +318,11 @@ export default function FocusApp() {
   // Derived
   const inboxTasks = tasks.filter((t) => t.status === "inbox");
   const backlogTasks = tasks
-    .filter((t) => t.status === "backlog" && t.context === context)
+    .filter((t) => t.status === "backlog" && t.context === context && (!t.snoozedUntil || t.snoozedUntil <= todayStr()))
     .sort((a, b) => calcPriority(b) - calcPriority(a));
+  const snoozedTasks = tasks
+    .filter((t) => t.status === "backlog" && t.context === context && t.snoozedUntil && t.snoozedUntil > todayStr())
+    .sort((a, b) => a.snoozedUntil.localeCompare(b.snoozedUntil));
   const top5Tasks = tasks
     .filter((t) => t.status === "top5" && t.context === context && t.top5Date === todayStr())
     .sort((a, b) => calcPriority(b) - calcPriority(a));
@@ -480,15 +499,12 @@ export default function FocusApp() {
 
   // Morning nudge actions
   const keepTask = (task) => {
-    saveTask({ ...task, top5Date: todayStr() });
+    // Send back to pipeline so auto-fill re-evaluates it alongside new candidates
+    saveTask({ ...task, status: "backlog", top5Date: null });
   };
 
   const dropTask = (task) => {
     removeTask(task.id);
-  };
-
-  const rescheduleTask = (task) => {
-    saveTask({ ...task, status: "backlog", top5Date: null });
   };
 
   // Inline editing
@@ -533,6 +549,19 @@ export default function FocusApp() {
     });
     setMetaTask(null);
     showToast("Updated");
+  };
+
+  const applySnooze = (date) => {
+    if (!snoozeTask || !date) return;
+    saveTask({ ...snoozeTask, snoozedUntil: date });
+    setSnoozeTask(null);
+    setPendingSnooze("");
+    showToast("Snoozed");
+  };
+
+  const clearSnooze = (task) => {
+    saveTask({ ...task, snoozedUntil: null });
+    showToast("Woken up");
   };
 
   // Export
@@ -814,7 +843,7 @@ export default function FocusApp() {
                   Nothing here yet
                 </div>
                 <div style={{ fontSize: 13, lineHeight: 1.7, color: COLORS.textDim }}>
-                  Process your inbox to build a backlog —<br />your top 3 will auto-fill each morning.
+                  Process your inbox to build a pipeline —<br />your top 3 will auto-fill each morning.
                 </div>
               </div>
             ) : (
@@ -883,6 +912,9 @@ export default function FocusApp() {
                       </div>
                       <button onClick={() => openMetaEditor(task)} style={{ padding: 4, opacity: 0.35 }} title="Edit task">
                         <Icons.edit size={14} />
+                      </button>
+                      <button onClick={() => { setSnoozeTask(task); setPendingSnooze(""); }} style={{ padding: 4, opacity: 0.35 }} title="Not today">
+                        <Icons.clock size={14} />
                       </button>
                       <button onClick={() => sendToBacklog(task)} style={{ padding: 4, opacity: 0.35 }} title="Remove from today">
                         <Icons.x size={14} />
@@ -1164,7 +1196,7 @@ export default function FocusApp() {
                   border: backlogTab === "backlog" ? `1px solid ${COLORS.accent}33` : "1px solid transparent",
                 }}
               >
-                Backlog{backlogTasks.length > 0 ? ` (${backlogTasks.length})` : ""}
+                Pipeline{backlogTasks.length > 0 ? ` (${backlogTasks.length})` : ""}
               </button>
               <button
                 onClick={() => setBacklogTab("someday")}
@@ -1230,10 +1262,10 @@ export default function FocusApp() {
                   return filtered.length === 0 ? (
                     <div style={{ textAlign: "center", padding: "48px 20px", color: COLORS.textDim }}>
                       <div style={{ fontFamily: FONT_DISPLAY, fontSize: 16, fontWeight: 600, color: COLORS.textMuted, marginBottom: 8 }}>
-                        {backlogTasks.length === 0 ? "Backlog is empty" : "No matches"}
+                        {backlogTasks.length === 0 ? "Pipeline is empty" : "No matches"}
                       </div>
                       <div style={{ fontSize: 12 }}>
-                        {backlogTasks.length === 0 ? "Process inbox items to build your backlog" : "Try a different filter"}
+                        {backlogTasks.length === 0 ? "Process inbox items to fill your pipeline" : "Try a different filter"}
                       </div>
                     </div>
                   ) : (
@@ -1301,6 +1333,9 @@ export default function FocusApp() {
                         <button onClick={() => openMetaEditor(task)} style={{ padding: "6px 8px", opacity: 0.5, flexShrink: 0 }} title="Edit task">
                           <Icons.edit size={13} />
                         </button>
+                        <button onClick={() => { setSnoozeTask(task); setPendingSnooze(""); }} style={{ padding: "6px 8px", opacity: 0.5, flexShrink: 0 }} title="Not today">
+                          <Icons.clock size={13} />
+                        </button>
                         <button
                           onClick={() => addToTop5(task)}
                           className="btn-primary"
@@ -1313,6 +1348,45 @@ export default function FocusApp() {
                   })
                   );
                 })()}
+
+                {/* Snoozed tasks */}
+                {snoozedTasks.length > 0 && (
+                  <div style={{ marginTop: 16 }}>
+                    <button
+                      onClick={() => setShowSnoozed(s => !s)}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 8, width: "100%",
+                        padding: "10px 14px", borderRadius: 10, fontSize: 12, fontWeight: 600,
+                        background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                        color: COLORS.textMuted, marginBottom: showSnoozed ? 8 : 0,
+                        transition: "margin-bottom 0.15s ease",
+                      }}
+                    >
+                      <Icons.clock size={14} />
+                      Snoozed ({snoozedTasks.length})
+                      <Icons.chevronRight size={14} style={{ marginLeft: "auto", transform: showSnoozed ? "rotate(90deg)" : "none", transition: "transform 0.15s ease" }} />
+                    </button>
+                    {showSnoozed && snoozedTasks.map((task, i) => (
+                      <div key={task.id} className="task-row focus-card" style={{ animationDelay: `${i * 30}ms`, opacity: 0.65 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {task.title}
+                          </div>
+                          <div style={{ fontSize: 10, color: COLORS.textDim, marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                            <Icons.clock size={10} color={COLORS.textDim} />
+                            Wakes {relativeDeadline(task.snoozedUntil)}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => clearSnooze(task)}
+                          style={{ padding: "6px 10px", borderRadius: 8, background: COLORS.surface, border: `1px solid ${COLORS.border}`, fontSize: 10, fontWeight: 500, flexShrink: 0 }}
+                        >
+                          Wake now
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             )}
 
@@ -1363,7 +1437,11 @@ export default function FocusApp() {
               display: "flex", alignItems: "center", gap: 10,
               marginBottom: 24,
             }}>
-              <button onClick={() => setScreen("day")} style={{ display: "flex", alignItems: "center", gap: 6, color: COLORS.textMuted, fontSize: 12 }}>
+              <button onClick={() => {
+                autoFillRef.current[`work:${todayStr()}`] = false;
+                autoFillRef.current[`personal:${todayStr()}`] = false;
+                setScreen("day");
+              }} style={{ display: "flex", alignItems: "center", gap: 6, color: COLORS.textMuted, fontSize: 12 }}>
                 <Icons.chevronLeft size={16} /> Day View
               </button>
             </div>
@@ -1372,7 +1450,7 @@ export default function FocusApp() {
               Good morning
             </div>
             <div style={{ color: COLORS.textMuted, fontSize: 12, marginBottom: 24 }}>
-              You have {yesterdayIncomplete.length} unfinished task{yesterdayIncomplete.length !== 1 ? "s" : ""} from yesterday. What would you like to do with each?
+              {yesterdayIncomplete.length} unfinished task{yesterdayIncomplete.length !== 1 ? "s" : ""} from yesterday. Keep returns it to your pipeline so today auto-fills fresh.
             </div>
 
             {yesterdayIncomplete.map((task, i) => (
@@ -1389,7 +1467,7 @@ export default function FocusApp() {
                   borderTop: `1px solid ${COLORS.border}`, paddingTop: 12,
                 }}>
                   <button
-                    onClick={() => { keepTask(task); showToast("Kept for today"); }}
+                    onClick={() => { keepTask(task); showToast("Returned to pipeline"); }}
                     style={{
                       flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 11, fontWeight: 600,
                       background: COLORS.accentDim, color: COLORS.accent,
@@ -1399,24 +1477,14 @@ export default function FocusApp() {
                     Keep
                   </button>
                   <button
-                    onClick={() => { rescheduleTask(task); showToast("Sent to backlog"); }}
-                    style={{
-                      flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 11, fontWeight: 600,
-                      background: COLORS.surface, color: COLORS.textMuted,
-                      border: `1px solid ${COLORS.border}`,
-                    }}
-                  >
-                    Reschedule
-                  </button>
-                  <button
-                    onClick={() => { dropTask(task); showToast("Dropped"); }}
+                    onClick={() => { dropTask(task); showToast("Discarded"); }}
                     style={{
                       flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 11, fontWeight: 600,
                       background: COLORS.dangerDim, color: COLORS.danger,
                       border: `1px solid ${COLORS.danger}33`,
                     }}
                   >
-                    Drop
+                    Discard
                   </button>
                 </div>
               </div>
@@ -1492,7 +1560,7 @@ export default function FocusApp() {
                   </div>
                   <div>
                     <div style={{ fontSize: 20, fontWeight: 700, fontFamily: FONT_DISPLAY }}>{tasks.filter(t => t.status === "backlog").length}</div>
-                    <div style={{ fontSize: 10, color: COLORS.textDim }}>In backlog</div>
+                    <div style={{ fontSize: 10, color: COLORS.textDim }}>In pipeline</div>
                   </div>
                   <div>
                     <div style={{ fontSize: 20, fontWeight: 700, fontFamily: FONT_DISPLAY }}>{somedayTasks.length}</div>
@@ -1589,7 +1657,7 @@ export default function FocusApp() {
           </button>
           <button className={`nav-item${screen === "backlog" ? " active" : ""}`} onClick={() => setScreen("backlog")}>
             <Icons.list size={22} />
-            <span>Backlog</span>
+            <span>Pipeline</span>
           </button>
           <button className={`nav-item${screen === "settings" ? " active" : ""}`} onClick={() => setScreen("settings")}>
             <Icons.settings size={22} />
@@ -1698,6 +1766,61 @@ export default function FocusApp() {
             >
               Cancel
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== SNOOZE SHEET ==================== */}
+      {snoozeTask && (
+        <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) { setSnoozeTask(null); setPendingSnooze(""); } }}>
+          <div className="sheet">
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 16, fontWeight: 600 }}>Not today</div>
+              <button onClick={() => { setSnoozeTask(null); setPendingSnooze(""); }} style={{ padding: 4 }}>
+                <Icons.x size={18} color={COLORS.textDim} />
+              </button>
+            </div>
+            <div style={{
+              fontSize: 13, fontWeight: 500, color: COLORS.textMuted,
+              marginBottom: 20, padding: "12px 14px", borderRadius: 10,
+              background: COLORS.bg, border: `1px solid ${COLORS.border}`,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>
+              {snoozeTask.title}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+              {[
+                ["Tomorrow", tomorrowStr()],
+                ["This weekend", nextWeekday(6)],
+                ["Next week", nextWeekday(1)],
+              ].map(([label, date]) => (
+                <button key={label} className="btn-choice" onClick={() => applySnooze(date)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>{label}</span>
+                  <span style={{ color: COLORS.textDim, fontSize: 11, fontFamily: FONT }}>{formatDate(date)}</span>
+                </button>
+              ))}
+            </div>
+            <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textDim, letterSpacing: "0.8px", marginBottom: 8 }}>PICK A DATE</div>
+              <input
+                type="date"
+                value={pendingSnooze}
+                onChange={(e) => setPendingSnooze(e.target.value)}
+                style={{
+                  width: "100%", padding: "10px 14px", borderRadius: 10,
+                  background: COLORS.bg, border: `1px solid ${COLORS.border}`,
+                  color: COLORS.text, fontSize: 13, fontFamily: FONT,
+                }}
+              />
+              <button
+                className="btn-primary"
+                disabled={!pendingSnooze}
+                onClick={() => applySnooze(pendingSnooze)}
+                style={{ marginTop: 10, width: "100%", opacity: pendingSnooze ? 1 : 0.4 }}
+              >
+                Snooze until this date
+              </button>
+            </div>
           </div>
         </div>
       )}
