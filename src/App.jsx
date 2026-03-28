@@ -553,7 +553,12 @@ export default function FocusApp() {
 
   const applySnooze = (date) => {
     if (!snoozeTask || !date) return;
-    saveTask({ ...snoozeTask, snoozedUntil: date });
+    const updates = { snoozedUntil: date };
+    if (snoozeTask.status === "top5") {
+      updates.status = "backlog";
+      updates.top5Date = null;
+    }
+    saveTask({ ...snoozeTask, ...updates });
     setSnoozeTask(null);
     setPendingSnooze("");
     showToast("Snoozed");
