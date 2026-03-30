@@ -1,5 +1,5 @@
 const DB_NAME = "focusflow_db";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -13,6 +13,9 @@ function openDB() {
       }
       if (!db.objectStoreNames.contains("settings")) {
         db.createObjectStore("settings", { keyPath: "key" });
+      }
+      if (!db.objectStoreNames.contains("wishItems")) {
+        db.createObjectStore("wishItems", { keyPath: "id" });
       }
     };
     req.onsuccess = () => resolve(req.result);
