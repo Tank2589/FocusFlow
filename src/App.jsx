@@ -67,6 +67,35 @@ function nextWeekday(dayIndex) { // 0=Sun … 6=Sat
   return d.toISOString().slice(0, 10);
 }
 
+function waitDays(price) {
+  if (price < 20) return 3;
+  if (price < 250) return 7;
+  return 14;
+}
+function waitLabel(price) {
+  if (price < 20) return "3-day hold";
+  if (price < 250) return "1-week hold";
+  return "2-week hold";
+}
+function wishReadyDate(item) {
+  const d = new Date(item.addedAt);
+  d.setDate(d.getDate() + waitDays(item.price));
+  return d.toISOString().slice(0, 10);
+}
+function wishDaysLeft(item) {
+  const ready = new Date(wishReadyDate(item) + "T00:00:00");
+  return Math.ceil((ready - new Date()) / (1000 * 60 * 60 * 24));
+}
+function wishIsReady(item) {
+  return wishDaysLeft(item) <= 0;
+}
+function wishCountdown(item) {
+  const d = wishDaysLeft(item);
+  if (d <= 0) return "Ready!";
+  if (d === 1) return "Tomorrow";
+  return `${d}d left`;
+}
+
 // ============================================================
 // ICONS (inline SVG components)
 // ============================================================
@@ -137,6 +166,12 @@ const Icons = {
     </svg>
   ),
   edit: (p) => <Icon d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" {...p} />,
+  heart: (p) => (
+    <svg width={p?.size||20} height={p?.size||20} viewBox="0 0 24 24" fill="none"
+      stroke={p?.color||"currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
+    </svg>
+  ),
   trash: (p) => (
     <svg width={p?.size || 20} height={p?.size || 20} viewBox="0 0 24 24" fill="none" stroke={p?.color || "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
@@ -209,6 +244,11 @@ export default function FocusApp() {
   const [snoozeTask, setSnoozeTask] = useState(null);
   const [pendingSnooze, setPendingSnooze] = useState("");
   const [showSnoozed, setShowSnoozed] = useState(false);
+  const [wishItems, setWishItems] = useState([]);
+  const [wishName, setWishName] = useState("");
+  const [wishPrice, setWishPrice] = useState("");
+  const [wishNotes, setWishNotes] = useState("");
+  const [wishFormOpen, setWishFormOpen] = useState(false);
   const [toast, setToast] = useState(null);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
@@ -223,6 +263,7 @@ export default function FocusApp() {
       setTasks(t || []);
       setLoaded(true);
     }).catch(() => setLoaded(true));
+    dbGetAll("wishItems").then((w) => setWishItems(w || [])).catch(() => {});
 
     // Request persistent storage
     requestPersistentStorage();
@@ -314,6 +355,34 @@ export default function FocusApp() {
     setToast(msg);
     setTimeout(() => setToast(null), 2200);
   }, []);
+
+  const saveWishItem = useCallback(async (item) => {
+    await dbPut("wishItems", item);
+    setWishItems(prev => {
+      const idx = prev.findIndex(w => w.id === item.id);
+      return idx >= 0 ? prev.map(w => w.id === item.id ? item : w) : [...prev, item];
+    });
+  }, []);
+
+  const removeWishItem = useCallback(async (id) => {
+    await dbDelete("wishItems", id);
+    setWishItems(prev => prev.filter(w => w.id !== id));
+  }, []);
+
+  const handleAddWish = () => {
+    const name = wishName.trim();
+    const price = parseFloat(wishPrice);
+    if (!name || isNaN(price) || price < 0) return;
+    saveWishItem({
+      id: genId(),
+      name,
+      price,
+      notes: wishNotes.trim(),
+      addedAt: new Date().toISOString(),
+    });
+    setWishName(""); setWishPrice(""); setWishNotes(""); setWishFormOpen(false);
+    showToast("Added to holds");
+  };
 
   // Derived
   const inboxTasks = tasks.filter((t) => t.status === "inbox");
@@ -1508,6 +1577,160 @@ export default function FocusApp() {
           </div>
         )}
 
+        {/* ==================== SHOPМIND ==================== */}
+        {screen === "wishlist" && (
+          <div className="focus-fade">
+
+            {/* Header */}
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: 20 }}>
+              <div>
+                <div style={{ fontFamily: FONT_DISPLAY, fontSize: 18, fontWeight: 600 }}>ShopMind</div>
+                <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>
+                  {wishItems.filter(wishIsReady).length > 0
+                    ? `${wishItems.filter(wishIsReady).length} ready to decide`
+                    : wishItems.length > 0 ? `${wishItems.length} on hold` : "Nothing here yet"}
+                </div>
+              </div>
+              <button
+                className="btn-primary"
+                onClick={() => setWishFormOpen(o => !o)}
+                style={{ fontSize: 12, padding: "8px 16px" }}
+              >
+                {wishFormOpen ? "Cancel" : "+ Add"}
+              </button>
+            </div>
+
+            {/* Inline add form (collapsible) */}
+            {wishFormOpen && (
+              <div className="focus-card" style={{
+                background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                borderRadius: 12, padding: 16, marginBottom: 16,
+              }}>
+                <input
+                  placeholder="What do you want?"
+                  value={wishName}
+                  onChange={e => setWishName(e.target.value)}
+                  style={{ width:"100%", padding:"10px 14px", borderRadius:10, marginBottom:10,
+                    background:COLORS.bg, border:`1px solid ${COLORS.border}`,
+                    color:COLORS.text, fontSize:14, fontFamily:FONT_DISPLAY, outline:"none" }}
+                />
+                <div style={{ display:"flex", gap:8, marginBottom:10 }}>
+                  <div style={{ position:"relative", flex:1 }}>
+                    <span style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)",
+                      color:COLORS.textDim, fontSize:14 }}>$</span>
+                    <input
+                      type="number" min="0" step="0.01" placeholder="0.00"
+                      value={wishPrice}
+                      onChange={e => setWishPrice(e.target.value)}
+                      style={{ width:"100%", padding:"10px 14px 10px 28px", borderRadius:10,
+                        background:COLORS.bg, border:`1px solid ${COLORS.border}`,
+                        color:COLORS.text, fontSize:14, fontFamily:FONT, outline:"none" }}
+                    />
+                  </div>
+                  {wishPrice && !isNaN(parseFloat(wishPrice)) && (
+                    <span className="tag" style={{ background:COLORS.accentDim, color:COLORS.accent, alignSelf:"center", whiteSpace:"nowrap" }}>
+                      {waitLabel(parseFloat(wishPrice))}
+                    </span>
+                  )}
+                </div>
+                <input
+                  placeholder="Notes (optional)"
+                  value={wishNotes}
+                  onChange={e => setWishNotes(e.target.value)}
+                  style={{ width:"100%", padding:"10px 14px", borderRadius:10, marginBottom:12,
+                    background:COLORS.bg, border:`1px solid ${COLORS.border}`,
+                    color:COLORS.text, fontSize:13, fontFamily:FONT_DISPLAY, outline:"none" }}
+                />
+                <button
+                  className="btn-primary"
+                  disabled={!wishName.trim() || !wishPrice || isNaN(parseFloat(wishPrice))}
+                  onClick={handleAddWish}
+                  style={{ width:"100%", opacity: wishName.trim() && wishPrice && !isNaN(parseFloat(wishPrice)) ? 1 : 0.4 }}
+                >
+                  Start hold
+                </button>
+              </div>
+            )}
+
+            {/* Empty state */}
+            {wishItems.length === 0 && !wishFormOpen && (
+              <div style={{ textAlign:"center", padding:"52px 20px", color:COLORS.textDim }}>
+                <div style={{ fontSize:40, marginBottom:14, letterSpacing:6, color:COLORS.border }}>♡</div>
+                <div style={{ fontFamily:FONT_DISPLAY, fontSize:17, fontWeight:600, color:COLORS.textMuted, marginBottom:8 }}>
+                  Nothing on hold
+                </div>
+                <div style={{ fontSize:13, lineHeight:1.7 }}>
+                  Add something you want — a hold period<br />lets you decide when it&apos;s really worth it.
+                </div>
+              </div>
+            )}
+
+            {/* Item list — ready first, then by days left ascending */}
+            {[...wishItems]
+              .sort((a, b) => {
+                const ar = wishIsReady(a), br = wishIsReady(b);
+                if (ar !== br) return ar ? -1 : 1;
+                return wishDaysLeft(a) - wishDaysLeft(b);
+              })
+              .map((item, i) => {
+                const ready = wishIsReady(item);
+                const countdown = wishCountdown(item);
+                return (
+                  <div key={item.id} className="task-row focus-card" style={{
+                    animationDelay: `${i * 40}ms`,
+                    borderLeftColor: ready ? COLORS.success : COLORS.border,
+                  }}>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:14, fontWeight:500, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                        {item.name}
+                      </div>
+                      <div style={{ display:"flex", gap:5, marginTop:6, flexWrap:"wrap", alignItems:"center" }}>
+                        <span className="tag" style={{ background:COLORS.border, color:COLORS.textMuted, fontFamily:FONT }}>
+                          ${item.price % 1 === 0 ? item.price : item.price.toFixed(2)}
+                        </span>
+                        <span className="tag" style={{ background:COLORS.surface, color:COLORS.textDim }}>
+                          {waitLabel(item.price)}
+                        </span>
+                        <span className="tag" style={{
+                          background: ready ? COLORS.successDim : countdown === "Tomorrow" ? COLORS.warningDim : COLORS.surface,
+                          color: ready ? COLORS.success : countdown === "Tomorrow" ? COLORS.warning : COLORS.textDim,
+                          fontWeight: ready ? 700 : 500,
+                        }}>
+                          {countdown}
+                        </span>
+                      </div>
+                      {item.notes && (
+                        <div style={{ fontSize:11, color:COLORS.textDim, marginTop:5 }}>{item.notes}</div>
+                      )}
+                    </div>
+                    {ready ? (
+                      <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                        <button
+                          onClick={() => { removeWishItem(item.id); showToast("Bought!"); }}
+                          style={{ padding:"6px 12px", borderRadius:8, fontSize:11, fontWeight:600,
+                            background:COLORS.successDim, color:COLORS.success, border:`1px solid ${COLORS.success}33` }}
+                        >
+                          Buy it
+                        </button>
+                        <button
+                          onClick={() => { removeWishItem(item.id); showToast("Passed"); }}
+                          style={{ padding:"6px 12px", borderRadius:8, fontSize:11, fontWeight:600,
+                            background:COLORS.surface, color:COLORS.textMuted, border:`1px solid ${COLORS.border}` }}
+                        >
+                          Pass
+                        </button>
+                      </div>
+                    ) : (
+                      <button onClick={() => removeWishItem(item.id)} style={{ padding:4, opacity:0.35 }} title="Remove">
+                        <Icons.x size={14} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+        )}
+
         {/* ==================== SETTINGS ==================== */}
         {screen === "settings" && (
           <div className="focus-fade">
@@ -1570,6 +1793,10 @@ export default function FocusApp() {
                   <div>
                     <div style={{ fontSize: 20, fontWeight: 700, fontFamily: FONT_DISPLAY }}>{somedayTasks.length}</div>
                     <div style={{ fontSize: 10, color: COLORS.textDim }}>Someday</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 20, fontWeight: 700, fontFamily: FONT_DISPLAY }}>{wishItems.length}</div>
+                    <div style={{ fontSize: 10, color: COLORS.textDim }}>On hold</div>
                   </div>
                 </div>
               </div>
@@ -1663,6 +1890,13 @@ export default function FocusApp() {
           <button className={`nav-item${screen === "backlog" ? " active" : ""}`} onClick={() => setScreen("backlog")}>
             <Icons.list size={22} />
             <span>Pipeline</span>
+          </button>
+          <button className={`nav-item${screen === "wishlist" ? " active" : ""}`} onClick={() => setScreen("wishlist")}>
+            <Icons.heart size={22} />
+            <span>ShopMind</span>
+            {wishItems.filter(wishIsReady).length > 0 && (
+              <span className="badge">{wishItems.filter(wishIsReady).length}</span>
+            )}
           </button>
           <button className={`nav-item${screen === "settings" ? " active" : ""}`} onClick={() => setScreen("settings")}>
             <Icons.settings size={22} />
