@@ -224,7 +224,7 @@ const FONT_DISPLAY = `'Space Grotesk', 'Outfit', system-ui, sans-serif`;
 // ============================================================
 export default function FocusApp() {
   const [tasks, setTasks] = useState([]);
-  const [screen, setScreen] = useState("day"); // day, inbox, processing, backlog, someday, morning, settings
+  const [screen, setScreen] = useState("day"); // day, inbox, processing, backlog, someday, settings
   const [context, setContext] = useState("work");
   const [loaded, setLoaded] = useState(false);
   const [captureOpen, setCaptureOpen] = useState(false);
@@ -336,6 +336,21 @@ export default function FocusApp() {
     setTimeout(() => setToast(null), 2200);
   }, [screen, context, loaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Silently carry yesterday's unfinished top5 tasks into today on load
+  useEffect(() => {
+    if (!loaded) return;
+    const stale = tasks.filter(
+      (t) => t.status === "top5" && t.top5Date && t.top5Date < todayStr()
+    );
+    if (stale.length === 0) return;
+    stale.forEach((task) => dbPut("tasks", { ...task, top5Date: todayStr() }));
+    setTasks((prev) =>
+      prev.map((t) =>
+        stale.find((s) => s.id === t.id) ? { ...t, top5Date: todayStr() } : t
+      )
+    );
+  }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Persist task changes
   const saveTask = useCallback(async (task) => {
     await dbPut("tasks", task);
@@ -399,9 +414,6 @@ export default function FocusApp() {
     (t) => t.status === "done" && t.context === context && t.completedDate === todayStr()
   );
   const somedayTasks = tasks.filter((t) => t.status === "someday");
-  const yesterdayIncomplete = tasks.filter(
-    (t) => t.status === "top5" && t.top5Date && t.top5Date < todayStr()
-  );
 
   // Capture
   const handleCapture = () => {
@@ -564,16 +576,6 @@ export default function FocusApp() {
 
   const sendToBacklog = (task) => {
     saveTask({ ...task, status: "backlog", top5Date: null });
-  };
-
-  // Morning nudge actions
-  const keepTask = (task) => {
-    // Send back to pipeline so auto-fill re-evaluates it alongside new candidates
-    saveTask({ ...task, status: "backlog", top5Date: null });
-  };
-
-  const dropTask = (task) => {
-    removeTask(task.id);
   };
 
   // Inline editing
@@ -856,30 +858,6 @@ export default function FocusApp() {
         {/* ==================== DAY VIEW ==================== */}
         {screen === "day" && (
           <div className="focus-fade">
-            {/* Morning nudge banner */}
-            {yesterdayIncomplete.length > 0 && (
-              <button
-                onClick={() => setScreen("morning")}
-                style={{
-                  display: "flex", alignItems: "center", gap: 10,
-                  padding: "12px 16px", borderRadius: 10, marginBottom: 16,
-                  background: COLORS.warningDim, border: `1px solid ${COLORS.warning}33`,
-                  width: "100%", textAlign: "left",
-                }}
-              >
-                <Icons.sun color={COLORS.warning} size={18} />
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.warning }}>
-                    {yesterdayIncomplete.length} task{yesterdayIncomplete.length > 1 ? "s" : ""} from yesterday
-                  </div>
-                  <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>
-                    Tap to review
-                  </div>
-                </div>
-                <Icons.chevronRight color={COLORS.warning} size={16} style={{ marginLeft: "auto" }} />
-              </button>
-            )}
-
             {/* Progress */}
             {(() => {
               const total = top5Tasks.length + completedToday.length;
@@ -1505,78 +1483,6 @@ export default function FocusApp() {
         )}
 
         {/* ==================== MORNING NUDGE ==================== */}
-        {screen === "morning" && (
-          <div className="focus-fade">
-            <div style={{
-              display: "flex", alignItems: "center", gap: 10,
-              marginBottom: 24,
-            }}>
-              <button onClick={() => {
-                autoFillRef.current[`work:${todayStr()}`] = false;
-                autoFillRef.current[`personal:${todayStr()}`] = false;
-                setScreen("day");
-              }} style={{ display: "flex", alignItems: "center", gap: 6, color: COLORS.textMuted, fontSize: 12 }}>
-                <Icons.chevronLeft size={16} /> Day View
-              </button>
-            </div>
-
-            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 18, fontWeight: 600, marginBottom: 6 }}>
-              Good morning
-            </div>
-            <div style={{ color: COLORS.textMuted, fontSize: 12, marginBottom: 24 }}>
-              {yesterdayIncomplete.length} unfinished task{yesterdayIncomplete.length !== 1 ? "s" : ""} from yesterday. Keep returns it to your pipeline so today auto-fills fresh.
-            </div>
-
-            {yesterdayIncomplete.map((task, i) => (
-              <div key={task.id} className="focus-card" style={{
-                background: COLORS.surface, borderRadius: 12, padding: 16,
-                border: `1px solid ${COLORS.border}`, marginBottom: 12,
-                animationDelay: `${i * 60}ms`,
-              }}>
-                <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 12 }}>
-                  {task.title}
-                </div>
-                <div style={{
-                  display: "flex", gap: 8,
-                  borderTop: `1px solid ${COLORS.border}`, paddingTop: 12,
-                }}>
-                  <button
-                    onClick={() => { keepTask(task); showToast("Returned to pipeline"); }}
-                    style={{
-                      flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 11, fontWeight: 600,
-                      background: COLORS.accentDim, color: COLORS.accent,
-                      border: `1px solid ${COLORS.accent}33`,
-                    }}
-                  >
-                    Keep
-                  </button>
-                  <button
-                    onClick={() => { dropTask(task); showToast("Discarded"); }}
-                    style={{
-                      flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 11, fontWeight: 600,
-                      background: COLORS.dangerDim, color: COLORS.danger,
-                      border: `1px solid ${COLORS.danger}33`,
-                    }}
-                  >
-                    Discard
-                  </button>
-                </div>
-              </div>
-            ))}
-
-            {yesterdayIncomplete.length === 0 && (
-              <div style={{ textAlign: "center", padding: "32px 20px", color: COLORS.textMuted }}>
-                All caught up! Go to your day view.
-                <div style={{ marginTop: 16 }}>
-                  <button className="btn-primary" onClick={() => setScreen("day")}>
-                    Start your day
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
         {/* ==================== SHOPМIND ==================== */}
         {screen === "wishlist" && (
           <div className="focus-fade">
