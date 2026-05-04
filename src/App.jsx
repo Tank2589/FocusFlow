@@ -224,7 +224,7 @@ const FONT_DISPLAY = `'Space Grotesk', 'Outfit', system-ui, sans-serif`;
 // ============================================================
 export default function FocusApp() {
   const [tasks, setTasks] = useState([]);
-  const [screen, setScreen] = useState("day"); // day, inbox, processing, backlog, someday, morning, settings
+  const [screen, setScreen] = useState("day"); // day, inbox, processing, backlog, someday, settings
   const [context, setContext] = useState("work");
   const [loaded, setLoaded] = useState(false);
   const [captureOpen, setCaptureOpen] = useState(false);
@@ -336,6 +336,21 @@ export default function FocusApp() {
     setTimeout(() => setToast(null), 2200);
   }, [screen, context, loaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Silently carry yesterday's unfinished top5 tasks into today on load
+  useEffect(() => {
+    if (!loaded) return;
+    const stale = tasks.filter(
+      (t) => t.status === "top5" && t.top5Date && t.top5Date < todayStr()
+    );
+    if (stale.length === 0) return;
+    stale.forEach((task) => dbPut("tasks", { ...task, top5Date: todayStr() }));
+    setTasks((prev) =>
+      prev.map((t) =>
+        stale.find((s) => s.id === t.id) ? { ...t, top5Date: todayStr() } : t
+      )
+    );
+  }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Persist task changes
   const saveTask = useCallback(async (task) => {
     await dbPut("tasks", task);
@@ -399,9 +414,6 @@ export default function FocusApp() {
     (t) => t.status === "done" && t.context === context && t.completedDate === todayStr()
   );
   const somedayTasks = tasks.filter((t) => t.status === "someday");
-  const yesterdayIncomplete = tasks.filter(
-    (t) => t.status === "top5" && t.top5Date && t.top5Date < todayStr()
-  );
 
   // Capture
   const handleCapture = () => {
@@ -564,16 +576,6 @@ export default function FocusApp() {
 
   const sendToBacklog = (task) => {
     saveTask({ ...task, status: "backlog", top5Date: null });
-  };
-
-  // Morning nudge actions
-  const keepTask = (task) => {
-    // Send back to pipeline so auto-fill re-evaluates it alongside new candidates
-    saveTask({ ...task, status: "backlog", top5Date: null });
-  };
-
-  const dropTask = (task) => {
-    removeTask(task.id);
   };
 
   // Inline editing
@@ -856,30 +858,6 @@ export default function FocusApp() {
         {/* ==================== DAY VIEW ==================== */}
         {screen === "day" && (
           <div className="focus-fade">
-            {/* Morning nudge banner */}
-            {yesterdayIncomplete.length > 0 && (
-              <button
-                onClick={() => setScreen("morning")}
-                style={{
-                  display: "flex", alignItems: "center", gap: 10,
-                  padding: "12px 16px", borderRadius: 10, marginBottom: 16,
-                  background: COLORS.warningDim, border: `1px solid ${COLORS.warning}33`,
-                  width: "100%", textAlign: "left",
-                }}
-              >
-                <Icons.sun color={COLORS.warning} size={18} />
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.warning }}>
-                    {yesterdayIncomplete.length} task{yesterdayIncomplete.length > 1 ? "s" : ""} from yesterday
-                  </div>
-                  <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>
-                    Tap to review
-                  </div>
-                </div>
-                <Icons.chevronRight color={COLORS.warning} size={16} style={{ marginLeft: "auto" }} />
-              </button>
-            )}
-
             {/* Progress */}
             {(() => {
               const total = top5Tasks.length + completedToday.length;
@@ -1505,75 +1483,157 @@ export default function FocusApp() {
         )}
 
         {/* ==================== MORNING NUDGE ==================== */}
-        {screen === "morning" && (
+        {/* ==================== SHOPМIND ==================== */}
+        {screen === "wishlist" && (
           <div className="focus-fade">
-            <div style={{
-              display: "flex", alignItems: "center", gap: 10,
-              marginBottom: 24,
-            }}>
-              <button onClick={() => {
-                autoFillRef.current[`work:${todayStr()}`] = false;
-                autoFillRef.current[`personal:${todayStr()}`] = false;
-                setScreen("day");
-              }} style={{ display: "flex", alignItems: "center", gap: 6, color: COLORS.textMuted, fontSize: 12 }}>
-                <Icons.chevronLeft size={16} /> Day View
+
+            {/* Header */}
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: 20 }}>
+              <div>
+                <div style={{ fontFamily: FONT_DISPLAY, fontSize: 18, fontWeight: 600 }}>ShopMind</div>
+                <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>
+                  {wishItems.filter(wishIsReady).length > 0
+                    ? `${wishItems.filter(wishIsReady).length} ready to decide`
+                    : wishItems.length > 0 ? `${wishItems.length} on hold` : "Nothing here yet"}
+                </div>
+              </div>
+              <button
+                className="btn-primary"
+                onClick={() => setWishFormOpen(o => !o)}
+                style={{ fontSize: 12, padding: "8px 16px" }}
+              >
+                {wishFormOpen ? "Cancel" : "+ Add"}
               </button>
             </div>
 
-            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 18, fontWeight: 600, marginBottom: 6 }}>
-              Good morning
-            </div>
-            <div style={{ color: COLORS.textMuted, fontSize: 12, marginBottom: 24 }}>
-              {yesterdayIncomplete.length} unfinished task{yesterdayIncomplete.length !== 1 ? "s" : ""} from yesterday. Keep returns it to your pipeline so today auto-fills fresh.
-            </div>
-
-            {yesterdayIncomplete.map((task, i) => (
-              <div key={task.id} className="focus-card" style={{
-                background: COLORS.surface, borderRadius: 12, padding: 16,
-                border: `1px solid ${COLORS.border}`, marginBottom: 12,
-                animationDelay: `${i * 60}ms`,
+            {/* Inline add form (collapsible) */}
+            {wishFormOpen && (
+              <div className="focus-card" style={{
+                background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                borderRadius: 12, padding: 16, marginBottom: 16,
               }}>
-                <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 12 }}>
-                  {task.title}
+                <input
+                  placeholder="What do you want?"
+                  value={wishName}
+                  onChange={e => setWishName(e.target.value)}
+                  style={{ width:"100%", padding:"10px 14px", borderRadius:10, marginBottom:10,
+                    background:COLORS.bg, border:`1px solid ${COLORS.border}`,
+                    color:COLORS.text, fontSize:14, fontFamily:FONT_DISPLAY, outline:"none" }}
+                />
+                <div style={{ display:"flex", gap:8, marginBottom:10 }}>
+                  <div style={{ position:"relative", flex:1 }}>
+                    <span style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)",
+                      color:COLORS.textDim, fontSize:14 }}>$</span>
+                    <input
+                      type="number" min="0" step="0.01" placeholder="0.00"
+                      value={wishPrice}
+                      onChange={e => setWishPrice(e.target.value)}
+                      style={{ width:"100%", padding:"10px 14px 10px 28px", borderRadius:10,
+                        background:COLORS.bg, border:`1px solid ${COLORS.border}`,
+                        color:COLORS.text, fontSize:14, fontFamily:FONT, outline:"none" }}
+                    />
+                  </div>
+                  {wishPrice && !isNaN(parseFloat(wishPrice)) && (
+                    <span className="tag" style={{ background:COLORS.accentDim, color:COLORS.accent, alignSelf:"center", whiteSpace:"nowrap" }}>
+                      {waitLabel(parseFloat(wishPrice))}
+                    </span>
+                  )}
                 </div>
-                <div style={{
-                  display: "flex", gap: 8,
-                  borderTop: `1px solid ${COLORS.border}`, paddingTop: 12,
-                }}>
-                  <button
-                    onClick={() => { keepTask(task); showToast("Returned to pipeline"); }}
-                    style={{
-                      flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 11, fontWeight: 600,
-                      background: COLORS.accentDim, color: COLORS.accent,
-                      border: `1px solid ${COLORS.accent}33`,
-                    }}
-                  >
-                    Keep
-                  </button>
-                  <button
-                    onClick={() => { dropTask(task); showToast("Discarded"); }}
-                    style={{
-                      flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 11, fontWeight: 600,
-                      background: COLORS.dangerDim, color: COLORS.danger,
-                      border: `1px solid ${COLORS.danger}33`,
-                    }}
-                  >
-                    Discard
-                  </button>
-                </div>
+                <input
+                  placeholder="Notes (optional)"
+                  value={wishNotes}
+                  onChange={e => setWishNotes(e.target.value)}
+                  style={{ width:"100%", padding:"10px 14px", borderRadius:10, marginBottom:12,
+                    background:COLORS.bg, border:`1px solid ${COLORS.border}`,
+                    color:COLORS.text, fontSize:13, fontFamily:FONT_DISPLAY, outline:"none" }}
+                />
+                <button
+                  className="btn-primary"
+                  disabled={!wishName.trim() || !wishPrice || isNaN(parseFloat(wishPrice))}
+                  onClick={handleAddWish}
+                  style={{ width:"100%", opacity: wishName.trim() && wishPrice && !isNaN(parseFloat(wishPrice)) ? 1 : 0.4 }}
+                >
+                  Start hold
+                </button>
               </div>
-            ))}
+            )}
 
-            {yesterdayIncomplete.length === 0 && (
-              <div style={{ textAlign: "center", padding: "32px 20px", color: COLORS.textMuted }}>
-                All caught up! Go to your day view.
-                <div style={{ marginTop: 16 }}>
-                  <button className="btn-primary" onClick={() => setScreen("day")}>
-                    Start your day
-                  </button>
+            {/* Empty state */}
+            {wishItems.length === 0 && !wishFormOpen && (
+              <div style={{ textAlign:"center", padding:"52px 20px", color:COLORS.textDim }}>
+                <div style={{ fontSize:40, marginBottom:14, letterSpacing:6, color:COLORS.border }}>♡</div>
+                <div style={{ fontFamily:FONT_DISPLAY, fontSize:17, fontWeight:600, color:COLORS.textMuted, marginBottom:8 }}>
+                  Nothing on hold
+                </div>
+                <div style={{ fontSize:13, lineHeight:1.7 }}>
+                  Add something you want — a hold period<br />lets you decide when it&apos;s really worth it.
                 </div>
               </div>
             )}
+
+            {/* Item list — ready first, then by days left ascending */}
+            {[...wishItems]
+              .sort((a, b) => {
+                const ar = wishIsReady(a), br = wishIsReady(b);
+                if (ar !== br) return ar ? -1 : 1;
+                return wishDaysLeft(a) - wishDaysLeft(b);
+              })
+              .map((item, i) => {
+                const ready = wishIsReady(item);
+                const countdown = wishCountdown(item);
+                return (
+                  <div key={item.id} className="task-row focus-card" style={{
+                    animationDelay: `${i * 40}ms`,
+                    borderLeftColor: ready ? COLORS.success : COLORS.border,
+                  }}>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:14, fontWeight:500, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                        {item.name}
+                      </div>
+                      <div style={{ display:"flex", gap:5, marginTop:6, flexWrap:"wrap", alignItems:"center" }}>
+                        <span className="tag" style={{ background:COLORS.border, color:COLORS.textMuted, fontFamily:FONT }}>
+                          ${item.price % 1 === 0 ? item.price : item.price.toFixed(2)}
+                        </span>
+                        <span className="tag" style={{ background:COLORS.surface, color:COLORS.textDim }}>
+                          {waitLabel(item.price)}
+                        </span>
+                        <span className="tag" style={{
+                          background: ready ? COLORS.successDim : countdown === "Tomorrow" ? COLORS.warningDim : COLORS.surface,
+                          color: ready ? COLORS.success : countdown === "Tomorrow" ? COLORS.warning : COLORS.textDim,
+                          fontWeight: ready ? 700 : 500,
+                        }}>
+                          {countdown}
+                        </span>
+                      </div>
+                      {item.notes && (
+                        <div style={{ fontSize:11, color:COLORS.textDim, marginTop:5 }}>{item.notes}</div>
+                      )}
+                    </div>
+                    {ready ? (
+                      <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                        <button
+                          onClick={() => { removeWishItem(item.id); showToast("Bought!"); }}
+                          style={{ padding:"6px 12px", borderRadius:8, fontSize:11, fontWeight:600,
+                            background:COLORS.successDim, color:COLORS.success, border:`1px solid ${COLORS.success}33` }}
+                        >
+                          Buy it
+                        </button>
+                        <button
+                          onClick={() => { removeWishItem(item.id); showToast("Passed"); }}
+                          style={{ padding:"6px 12px", borderRadius:8, fontSize:11, fontWeight:600,
+                            background:COLORS.surface, color:COLORS.textMuted, border:`1px solid ${COLORS.border}` }}
+                        >
+                          Pass
+                        </button>
+                      </div>
+                    ) : (
+                      <button onClick={() => removeWishItem(item.id)} style={{ padding:4, opacity:0.35 }} title="Remove">
+                        <Icons.x size={14} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
           </div>
         )}
 
